@@ -5,15 +5,18 @@ import pandas as pd
 import streamlit as st
 from openai import OpenAI
 
-# Configuración inicial de la página
 st.set_page_config(page_title='Riesgo actuarial', layout='centered')
 st.title('Predicción de riesgo actuarial-Josue David Del Cid-PTI-0620-03')
 
 @st.cache_resource
 def cargar_modelo():
-    # Búsqueda dinámica de archivos para evitar fallos por renombramiento local vs repo
-    pkl = 'kmeans_riesgo_actuarial.pkl' if os.path.exists('kmeans_riesgo_actuarial.pkl') else 'kmeans_riesgo_actuarial(2).pkl'
-    meta = 'model_metadata.json' if os.path.exists('model_metadata.json') else 'model_metadata(2).json'
+    # Rutas dentro de carpeta 'models/' o directorio raíz
+    if os.path.exists('models/kmeans_riesgo_actuarial.pkl'):
+        pkl = 'models/kmeans_riesgo_actuarial.pkl'
+        meta = 'models/model_metadata.json'
+    else:
+        pkl = 'kmeans_riesgo_actuarial.pkl' if os.path.exists('kmeans_riesgo_actuarial.pkl') else 'kmeans_riesgo_actuarial(2).pkl'
+        meta = 'model_metadata.json' if os.path.exists('model_metadata.json') else 'model_metadata(2).json'
     
     modelo = joblib.load(pkl)
 
@@ -24,25 +27,23 @@ def cargar_modelo():
 
 @st.cache_data
 def cargar_base():
+    if os.path.exists('models/insurance.csv'):
+        return pd.read_csv('models/insurance.csv')
     csv = 'insurance.csv' if os.path.exists('insurance.csv') else 'insurance(2).csv'
     return pd.read_csv(csv)
 
-# Carga de modelo y dataset
 modelo, metadata = cargar_modelo()
 df = cargar_base()
 
-# Manejo seguro y defensivo del mapa de riesgo dentro de 'kmeans'
+# Manejo seguro de llaves anidadas
 kmeans_meta = metadata.get('kmeans', {})
 mapa_riesgo_dict = kmeans_meta.get('mapa_riesgo', metadata.get('mapa_riesgo', {}))
 
-# Conversión segura de claves a entero
 mapa = {int(k): v for k, v in mapa_riesgo_dict.items()} if mapa_riesgo_dict else {}
 
-# Nombre del proyecto / modelo seguro
 nombre_proyecto = metadata.get('proyecto', metadata.get('nombre_modelo', 'Modelo de Riesgo Actuarial'))
 st.caption(nombre_proyecto)
 
-# Formulario para recabar parámetros
 with st.form('datos'):
     col1, col2 = st.columns(2)
 
@@ -65,7 +66,6 @@ with st.form('datos'):
     enviar = st.form_submit_button('Evaluar')
 
 if enviar:
-    # Creación del DataFrame de entrada con el orden estándar de columnas
     cliente = pd.DataFrame([{
         'age': age,
         'sex': sex,
@@ -76,77 +76,72 @@ if enviar:
         'charges': charges
     }])
 
+    # Asegurar el orden exacto de columnas que espera el modelo
+    cols_esperadas = metadata.get('features_kmeans', list(cliente.columns))
+    
     try:
-        cluster = int(modelo.predict(cliente)[0])
-        riesgo = mapa.get(cluster, f'Cluster {cluster}')
+        # Intenta predecir directamente
+        cluster = int(modelo.predict(cliente[cols_esperadas])[0])
+    except Exception:
+        # Si falla por tipos categóricos, aplica encoding numérico
+        cliente_enc = cliente.copy()
+        cliente_enc['sex'] = cliente_enc['sex'].map({'female': 0, 'male': 1})
+        cliente_enc['smoker'] = cliente_enc['smoker'].map({'no': 0, 'yes': 1})
+        reg_map = {'northeast': 0, 'northwest': 1, 'southeast': 2, 'southwest': 3}
+        cliente_enc['region'] = cliente_enc['region'].map(reg_map)
+        
+        cluster = int(modelo.predict(cliente_enc[cols_esperadas])[0])
 
-        st.subheader(f'Riesgo actuarial: {riesgo}')
-        st.write(f'Cluster asignado: {cluster}')
+    riesgo = mapa.get(cluster, f'Cluster {cluster}')
 
-        # Evaluación con la API de Groq
-        api_key = st.secrets.get(
-            'GROQ_API_KEY',
-            os.getenv('GROQ_API_KEY', '')
-        )
+    st.subheader(f'Riesgo actuarial: {riesgo}')
+    st.write(f'Cluster asignado: {cluster}')
 
-        if api_key:
-            prompt = f'''
-            Actúa como analista actuarial.
+    api_key = st.secrets.get('GROQ_API_KEY', os.getenv('GROQ_API_KEY', ''))
 
-            Explica brevemente el resultado y brinda 3 recomendaciones prudentes.
+    if api_key:
+        prompt = f'''
+        Actúa como analista actuarial.
 
-            Datos:
-            edad={age}
-            sexo={sex}
-            bmi={bmi}
-            hijos={children}
-            fumador={smoker}
-            región={region}
-            cargos={charges}
+        Explica brevemente el resultado y brinda 3 recomendaciones prudentes.
 
-            Resultado:
-            cluster={cluster}
-            riesgo={riesgo}
-            '''
+        Datos:
+        edad={age}
+        sexo={sex}
+        bmi={bmi}
+        hijos={children}
+        fumador={smoker}
+        región={region}
+        cargos={charges}
 
-            try:
-                client = OpenAI(
-                    api_key=api_key,
-                    base_url="https://api.groq.com/openai/v1"
-                )
+        Resultado:
+        cluster={cluster}
+        riesgo={riesgo}
+        '''
 
-                respuesta = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "Eres un asesor actuarial profesional."
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ]
-                )
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.groq.com/openai/v1"
+            )
 
-                texto = respuesta.choices[0].message.content
-                st.info(texto)
+            respuesta = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": "Eres un asesor actuarial profesional."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
 
-            except Exception as e:
-                st.warning(f'Error con Groq: {e}')
+            texto = respuesta.choices[0].message.content
+            st.info(texto)
 
-        else:
-            st.warning('Agregue GROQ_API_KEY en los secretos de Streamlit.')
-
-    except Exception as err:
-        st.error(f"Error al ejecutar la predicción con el modelo: {err}")
+        except Exception as e:
+            st.warning(f'Error con Groq: {e}')
+    else:
+        st.warning('Agregue GROQ_API_KEY en los secretos de Streamlit.')
 
 st.divider()
 
 st.write('Vista rápida de la base principal')
-
-# Actualización del parámetro deprecado 'use_container_width' a 'width="stretch"'
-st.dataframe(
-    df.head(20),
-    width="stretch"
-)
+st.dataframe(df.head(20), width="stretch")
