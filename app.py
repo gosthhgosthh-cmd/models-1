@@ -26,11 +26,16 @@ def cargar_base():
 modelo, metadata = cargar_modelo()
 df = cargar_base()
 
+# Acceso seguro al diccionario de riesgo en 'kmeans'
+kmeans_meta = metadata.get('kmeans', {})
+mapa_riesgo_dict = kmeans_meta.get('mapa_riesgo', {})
 
-mapa = {int(k): v for k, v in metadata['kmeans']['mapa_riesgo'].items()}
+# Construye el mapa (soporta llaves numéricas o de texto)
+mapa = {int(k): v for k, v in mapa_riesgo_dict.items()}
 
-
-st.caption(metadata.get('proyecto', 'Predicción de riesgo actuarial'))
+# Muestra el nombre del proyecto/modelo de forma segura
+nombre_proyecto = metadata.get('proyecto', metadata.get('nombre_modelo', 'Modelo de Riesgo'))
+st.caption(nombre_proyecto)
 
 with st.form('datos'):
 
