@@ -26,11 +26,11 @@ def cargar_base():
 modelo, metadata = cargar_modelo()
 df = cargar_base()
 
-# Accedemos a mapa_riesgo dentro de 'kmeans'
+
 mapa = {int(k): v for k, v in metadata['kmeans']['mapa_riesgo'].items()}
 
-# Accedemos a 'proyecto' (en lugar de 'nombre_modelo')
-st.caption(metadata['proyecto'])
+
+st.caption(metadata.get('proyecto', 'Predicción de riesgo actuarial'))
 
 with st.form('datos'):
 
